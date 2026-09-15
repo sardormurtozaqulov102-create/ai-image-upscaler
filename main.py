@@ -16,16 +16,6 @@ import threading
 import time
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# FIX: basicsr < 1.4.3 imports `torchvision.transforms.functional_tensor`,
-# which was removed in torchvision >= 0.17. This is the single most common
-# crash-on-import for this exact project (server dies the instant you run
-# `uvicorn main:app`, which looks like "Failed to fetch" in the browser
-# because there's nothing listening on port 8000).
-#
-# We patch this in BEFORE importing basicsr/realesrgan, regardless of which
-# torchvision version is installed, so the app works either way.
-# ---------------------------------------------------------------------------
 try:
     import torchvision.transforms.functional_tensor  # noqa: F401
 except ModuleNotFoundError:
@@ -47,9 +37,7 @@ BASE_DIR = Path(__file__).resolve().parent
 WEIGHTS_DIR = BASE_DIR / "weights"
 WEIGHTS_DIR.mkdir(exist_ok=True)
 
-# FIX: guard against absurdly large uploads/images that would OOM the
-# process (especially on CPU-only machines) instead of crashing the worker.
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 25 * 1024 * 1024))  # 25 MB
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 20 * 1024 * 1024))  # 20 MB
 MAX_INPUT_PIXELS = int(os.getenv("MAX_INPUT_PIXELS", 20_000_000))  # ~20MP, e.g. 5000x4000
 
 app = FastAPI(title="AI Photo Upscaler", version="1.1.0")
@@ -104,8 +92,7 @@ def _download_with_retries(info: dict, model_path: Path, attempts: int = 3) -> N
             return
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            # FIX: clean up partial downloads so a failed attempt doesn't
-            # leave a corrupt/truncated .pth that silently breaks loading.
+
             if model_path.exists():
                 try:
                     model_path.unlink()
@@ -154,9 +141,6 @@ def get_upsampler(scale: int) -> RealESRGANer:
                 gpu_id=0 if use_cuda else None,
             )
         except Exception as exc:  # noqa: BLE001
-            # FIX: a corrupted/partial weight file raises here, not during
-            # download. Delete it so the next request re-downloads cleanly
-            # instead of failing forever.
             if model_path.exists():
                 try:
                     model_path.unlink()
@@ -202,7 +186,6 @@ async def upscale(
     if not raw:
         raise HTTPException(status_code=400, detail="Fayl bo'sh.")
 
-    # FIX: reject oversized uploads before doing any decoding/processing.
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
@@ -220,8 +203,6 @@ async def upscale(
 
     original_width, original_height = image.size
 
-    # FIX: guard against pixel-bomb inputs that would OOM the process
-    # (especially on CPU) rather than crashing mid-inference.
     if original_width * original_height > MAX_INPUT_PIXELS:
         raise HTTPException(
             status_code=413,
@@ -236,8 +217,7 @@ async def upscale(
         upsampler = get_upsampler(scale)
         output_np, _ = upsampler.enhance(input_np, outscale=scale)
     except RuntimeError as exc:
-        # FIX: out-of-memory (CUDA or CPU) is common with large images/tiles
-        # and deserves a specific, actionable message instead of a generic 500.
+
         msg = str(exc)
         if "out of memory" in msg.lower():
             raise HTTPException(
@@ -273,8 +253,6 @@ async def upscale(
     )
 
 
-# FIX: turn any unexpected exception into a clean JSON 500 instead of an
-# unhandled server error, so the frontend always gets parseable JSON.
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):  # noqa: ANN001
     return JSONResponse(
