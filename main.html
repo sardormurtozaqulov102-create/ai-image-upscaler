@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Photo Upscaler</title>
+<style>
+  :root {
+    --bg: #12161c;
+    --panel: #1a2029;
+    --panel-2: #202834;
+    --line: #2b3441;
+    --line-soft: #232b36;
+    --text: #eef1f6;
+    --text-muted: #8f9bad;
+    --text-faint: #5c6779;
+    --amber: #e8a33d;
+    --amber-soft: rgba(232, 163, 61, 0.14);
+    --amber-line: rgba(232, 163, 61, 0.45);
+    --danger: #e2685b;
+    --danger-soft: rgba(226, 104, 91, 0.12);
+    --radius: 10px;
+    --ease: cubic-bezier(.22, .61, .36, 1);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  body {
+    min-height: 100vh;
+    font-family: Inter, ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px 64px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  .wrap { width: min(640px, 100%); }
+
+  header.top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  h1 {
+    font-size: 21px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+
+  .status-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+  .status-dot i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    display: inline-block;
+  }
+  .status-dot.online i { background: #5fbf7a; }
+  .status-dot.offline i { background: var(--danger); }
+
+  p.sub {
+    color: var(--text-muted);
+    font-size: 14.5px;
+    margin: 0 0 30px;
+    line-height: 1.5;
+  }
+
+  /* ---------- light table ---------- */
+
+  .table {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 3px;
+  }
+
+  .stage {
+    position: relative;
+    border-radius: 7px;
+    overflow: hidden;
+    background:
+      linear-gradient(135deg, var(--panel-2) 25%, transparent 25%) -10px 0 / 20px 20px,
+      linear-gradient(225deg, var(--panel-2) 25%, transparent 25%) -10px 0 / 20px 20px,
+      linear-gradient(315deg, var(--panel-2) 25%, transparent 25%) 0 0 / 20px 20px,
+      linear-gradient(45deg, var(--panel-2) 25%, transparent 25%) 0 0 / 20px 20px,
+      #171d25;
+    min-height: 220px;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .drop {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 48px 24px;
+    cursor: pointer;
+    border: 1px dashed transparent;
+    transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+  }
+  .drop:hover, .drop.drag {
+    background: rgba(232, 163, 61, 0.05);
+    border-color: var(--amber-line);
+  }
+  .drop svg { opacity: 0.55; }
+  .drop .name {
+    font-size: 14.5px;
+    font-weight: 560;
+    color: var(--text);
+  }
+  .drop .hint {
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+  input[type=file] { display: none; }
+
+  .preview {
+    position: relative;
+    width: 100%;
+    display: none;
+    user-select: none;
+  }
+  .preview.show { display: block; }
+  .preview img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .compare {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+  }
+  .compare .after-wrap {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    width: 50%;
+  }
+  .compare .after-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    inset: 0;
+  }
+  .handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    background: var(--amber);
+    cursor: ew-resize;
+    transform: translateX(-1px);
+  }
+  .handle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--amber);
+    transform: translate(-50%, -50%);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  }
+  .handle::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    transform: translate(-50%, -50%);
+    background:
+      linear-gradient(90deg, transparent 45%, #12161c 45%, #12161c 55%, transparent 55%);
+    z-index: 2;
+  }
+  .tag {
+    position: absolute;
+    bottom: 10px;
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    color: #fff;
+    background: rgba(15, 18, 24, 0.6);
+    padding: 4px 9px;
+    border-radius: 999px;
+    backdrop-filter: blur(4px);
+  }
+  .tag.before { left: 10px; }
+  .tag.after { right: 10px; }
+
+  /* ---------- controls ---------- */
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 22px 4px 0;
+    flex-wrap: wrap;
+  }
+
+  .seg {
+    display: inline-flex;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .seg button {
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  }
+  .seg button.active {
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+  .seg button:focus-visible, .primary:focus-visible, .drop:focus-visible, .ghost:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+  }
+
+  .primary {
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 20px;
+    font-size: 14px;
+    font-weight: 650;
+    color: #16130a;
+    background: var(--amber);
+    cursor: pointer;
+    transition: filter 0.15s var(--ease), transform 0.05s var(--ease);
+  }
+  .primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .primary:active:not(:disabled) { transform: translateY(1px); }
+  .primary:disabled {
+    background: var(--panel-2);
+    color: var(--text-faint);
+    cursor: not-allowed;
+  }
+
+  .spacer { flex: 1; }
+
+  .ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 10px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .ghost:hover { border-color: var(--amber-line); }
+
+  /* ---------- progress + status ---------- */
+
+  .progress {
+    display: none;
+    height: 3px;
+    background: var(--line-soft);
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 20px 4px 0;
+  }
+  .progress .bar {
+    height: 100%;
+    width: 30%;
+    background: var(--amber);
+    border-radius: 999px;
+    animation: sweep 1.15s infinite ease-in-out;
+  }
+  @keyframes sweep {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(340%); }
+  }
+
+  .message {
+    margin: 16px 4px 0;
+    font-size: 13.5px;
+    min-height: 18px;
+    color: var(--text-muted);
+  }
+  .message.error {
+    color: #f3a79e;
+    background: var(--danger-soft);
+    border: 1px solid rgba(226, 104, 91, 0.35);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
+  .stats {
+    display: flex;
+    gap: 28px;
+    margin: 22px 4px 0;
+  }
+  .stat .k {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-bottom: 3px;
+  }
+  .stat .v {
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>AI Photo Upscaler</h1>
+    <span class="status-dot" id="statusDot"><i></i><span id="statusText">tekshirilmoqda…</span></span>
+  </header>
+  <p class="sub">Real ESRGAN ai models help to upscale images - not just a resize.</p>
+
+  <div class="table">
+    <div class="stage" id="stage">
+      <label class="drop" id="dropZone" for="fileInput" tabindex="0">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="name" id="fileName">Choose image</span>
+        <span class="hint">Drag and drop images here — JPG, PNG, WEBP</span>
+      </label>
+
+      <div class="preview" id="previewSingle">
+        <img id="previewImg" alt="Tanlangan rasm">
+      </div>
+
+      <div class="preview compare" id="compareWrap">
+        <img id="beforeImg" alt="Original">
+        <span class="tag before">Original</span>
+        <div class="after-wrap" id="afterWrap">
+          <img id="afterImg" alt="AI natija">
+        </div>
+        <span class="tag after">AI natija</span>
+        <div class="handle" id="handle"></div>
+      </div>
+    </div>
+  </div>
+
+  <input id="fileInput" type="file" accept="image/*">
+
+  <div class="controls">
+    <div class="seg" id="scaleSeg" role="group" aria-label="Kattalashtirish darajasi">
+      <button type="button" data-scale="2" class="active">2×</button>
+      <button type="button" data-scale="4">4×</button>
+    </div>
+    <button class="primary" id="upscaleBtn" disabled>Upscale</button>
+    <div class="spacer"></div>
+    <a class="ghost" id="download" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 4v12M6 12l6 6 6-6M4 20h16" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Yuklab olish
+    </a>
+  </div>
+
+  <div class="progress" id="progress"><div class="bar"></div></div>
+  <div class="message" id="message"></div>
+
+  <div class="stats" id="stats" style="display:none">
+    <div class="stat"><div class="k">Original</div><div class="v" id="statOriginal">—</div></div>
+    <div class="stat"><div class="k">Natija</div><div class="v" id="statOutput">—</div></div>
+  </div>
+
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+
+const el = (id) => document.getElementById(id);
+const fileInput = el("fileInput");
+const dropZone = el("dropZone");
+const stage = el("stage");
+const fileName = el("fileName");
+const previewSingle = el("previewSingle");
+const previewImg = el("previewImg");
+const compareWrap = el("compareWrap");
+const beforeImg = el("beforeImg");
+const afterImg = el("afterImg");
+const afterWrap = el("afterWrap");
+const handle = el("handle");
+const scaleSeg = el("scaleSeg");
+const upscaleBtn = el("upscaleBtn");
+const progress = el("progress");
+const message = el("message");
+const download = el("download");
+const stats = el("stats");
+const statOriginal = el("statOriginal");
+const statOutput = el("statOutput");
+const statusDot = el("statusDot");
+const statusText = el("statusText");
+
+let scale = 2;
+let currentFile = null;
+let resultUrl = null;
+
+// ---- backend health check ----
+async function checkHealth() {
+  try {
+    const res = await fetch(`${API}/health`, { signal: AbortSignal.timeout(2500) });
+    if (!res.ok) throw new Error();
+    statusDot.className = "status-dot online";
+    statusText.textContent = "Backend connected";
+  } catch {
+    statusDot.className = "status-dot offline";
+    statusText.textContent = "Backend not connected";
+  }
+}
+checkHealth();
+
+// ---- scale toggle ----
+scaleSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-scale]");
+  if (!btn) return;
+  scale = Number(btn.dataset.scale);
+  [...scaleSeg.children].forEach((b) => b.classList.toggle("active", b === btn));
+});
+
+// ---- file selection ----
+fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+
+["dragenter", "dragover"].forEach((evt) =>
+  dropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drag");
+  })
+);
+["dragleave", "drop"].forEach((evt) =>
+  dropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("drag");
+  })
+);
+dropZone.addEventListener("drop", (e) => {
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+});
+dropZone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") fileInput.click();
+});
+
+function setFile(file) {
+  if (!file || !file.type.startsWith("image/")) {
+    showError("Iltimos, rasm faylini tanlang.");
+    return;
+  }
+  currentFile = file;
+  fileName.textContent = file.name;
+
+  if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
+  compareWrap.classList.remove("show");
+  download.style.display = "none";
+  stats.style.display = "none";
+  clearMessage();
+
+  const url = URL.createObjectURL(file);
+  previewImg.src = url;
+  previewSingle.classList.add("show");
+  dropZone.style.display = "none";
+
+  upscaleBtn.disabled = false;
+}
+
+// ---- upscale ----
+upscaleBtn.addEventListener("click", runUpscale);
+
+async function runUpscale() {
+  if (!currentFile) return;
+
+  upscaleBtn.disabled = true;
+  progress.style.display = "block";
+  clearMessage();
+  message.textContent = "AI model rasmni qayta tiklamoqda… birinchi ishga tushirishda model yuklanadi, biroz kutishingiz mumkin.";
+
+  const form = new FormData();
+  form.append("file", currentFile);
+  form.append("scale", scale);
+
+  try {
+    const response = await fetch(`${API}/upscale`, { method: "POST", body: form });
+
+    if (!response.ok) {
+      let detail = `Server error (${response.status})`;
+      try {
+        const data = await response.json();
+        if (data.detail) detail = data.detail;
+      } catch {}
+      throw new Error(detail);
+    }
+
+    const blob = await response.blob();
+    if (resultUrl) URL.revokeObjectURL(resultUrl);
+    resultUrl = URL.createObjectURL(blob);
+
+    beforeImg.src = previewImg.src;
+    afterImg.src = resultUrl;
+    previewSingle.classList.remove("show");
+    compareWrap.classList.add("show");
+    setHandle(50);
+
+    download.href = resultUrl;
+    download.download = `upscaled_${scale}x.png`;
+    download.style.display = "inline-flex";
+
+    const original = response.headers.get("X-Original-Size");
+    const output = response.headers.get("X-Output-Size");
+    if (original && output) {
+      statOriginal.textContent = original.replace("x", " × ");
+      statOutput.textContent = output.replace("x", " × ");
+      stats.style.display = "flex";
+    }
+
+    message.textContent = "Tayyor. Chiziqni suring — compare original ai result.";
+  } catch (err) {
+    showError("Error: " + err.message);
+  } finally {
+    upscaleBtn.disabled = false;
+    progress.style.display = "none";
+  }
+}
+
+function showError(text) {
+  message.textContent = text;
+  message.classList.add("error");
+}
+function clearMessage() {
+  message.textContent = "";
+  message.classList.remove("error");
+}
+
+// ---- compare slider ----
+function setHandle(pct) {
+  pct = Math.max(0, Math.min(100, pct));
+  handle.style.left = pct + "%";
+  afterWrap.style.width = pct + "%";
+}
+
+let dragging = false;
+handle.addEventListener("pointerdown", (e) => {
+  dragging = true;
+  handle.setPointerCapture(e.pointerId);
+});
+handle.addEventListener("pointerup", () => (dragging = false));
+handle.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  const rect = compareWrap.getBoundingClientRect();
+  const pct = ((e.clientX - rect.left) / rect.width) * 100;
+  setHandle(pct);
+});
+compareWrap.addEventListener("click", (e) => {
+  if (!compareWrap.classList.contains("show")) return;
+  const rect = compareWrap.getBoundingClientRect();
+  const pct = ((e.clientX - rect.left) / rect.width) * 100;
+  setHandle(pct);
+});
+</script>
+</body>
+</html>

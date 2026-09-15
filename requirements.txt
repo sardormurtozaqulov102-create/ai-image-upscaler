@@ -1,0 +1,15 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.9
+Pillow>=10.0
+numpy<2
+opencv-python-headless>=4.8
+# torch/torchvision: install the CUDA build from https://pytorch.org/get-started/locally/
+# if you have an NVIDIA GPU. These CPU-default pins are chosen for
+# compatibility with basicsr's known torchvision import path.
+torch>=2.1
+torchvision>=0.16
+basicsr>=1.4.2
+facexlib>=0.3.0
+gfpgan>=1.3.8
+realesrgan>=0.3.0
